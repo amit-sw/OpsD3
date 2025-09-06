@@ -21,7 +21,7 @@ TOKEN_FILE = "token.json"
 
 def set_page() -> None:
     st.set_page_config(page_title="Gmail Read-Only Login", layout="centered")
-    st.title("Sign in with Google (Gmail Read-Only)")
+    #st.title("Sign in with Google (Gmail Read-Only)")
 
 
 def get_saved_credentials() -> Optional[Credentials]:
@@ -136,8 +136,8 @@ def auto_complete_if_code(flow_key: str, url_key: str, redirect_uri: str) -> boo
 
 
 def manual_completion_ui(flow_key: str, url_key: str) -> None:
-    st.info("2) If not redirected, paste full URL or just the code.")
-    user_input = st.text_input("Redirect URL or code")
+    #st.info("2) If not redirected, paste full URL or just the code.")
+    user_input = st.text_input("XXX",placeholder="Redirect URL or code", label_visibility="hidden")
     if st.button("Complete Sign-in") and user_input:
         if user_input.startswith("http"):
             st.session_state[flow_key].fetch_token(authorization_response=user_input)
@@ -251,7 +251,7 @@ def main() -> None:
         reset_auth_ui()
         search_ui(creds)
         return
-    st.info("Sign in to grant read-only access to your Gmail.")
+    #st.info("Sign in to grant read-only access to your Gmail.")
     auth_ui()
 
 
