@@ -1,6 +1,7 @@
 import os
+import time
 import urllib.parse
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import streamlit as st
 from google.auth.transport.requests import Request
@@ -166,20 +167,30 @@ def gmail_service(creds: Credentials):
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
-def list_message_ids(service, query: str, limit: int) -> List[str]:
-    ids, token = [], None
-    while len(ids) < limit:
+def list_message_ids(service, query: str, limit: int, fetch_all: bool = False, cap: int = 1000) -> Tuple[List[str], int]:
+    ids, token, est = [], None, 0
+    target = cap if fetch_all else limit
+    while len(ids) < target:
         resp = (
             service.users()
             .messages()
-            .list(userId="me", q=query, maxResults=min(100, limit - len(ids)), pageToken=token)
+            .list(
+                userId="me",
+                q=query,
+                maxResults=min(100, target - len(ids)),
+                pageToken=token,
+            )
             .execute()
         )
-        ids.extend([m["id"] for m in resp.get("messages", [])])
-        token = resp.get("nextPageToken")
-        if not token or not resp.get("messages"):
+        est = resp.get("resultSizeEstimate", est)
+        msgs = resp.get("messages", [])
+        if not msgs:
             break
-    return ids[:limit]
+        ids.extend([m["id"] for m in msgs])
+        token = resp.get("nextPageToken")
+        if not token:
+            break
+    return (ids[:target], est)
 
 
 def fetch_metadata(service, msg_id: str) -> Dict[str, str]:
@@ -200,17 +211,17 @@ def fetch_metadata(service, msg_id: str) -> Dict[str, str]:
     }
 
 
-def gmail_search(creds: Credentials, query: str, limit: int) -> List[Dict[str, str]]:
+def gmail_search(creds: Credentials, query: str, limit: int, fetch_all: bool = False) -> Tuple[List[Dict[str, str]], int]:
     try:
         svc = gmail_service(creds)
-        ids = list_message_ids(svc, query, limit)
-        return [fetch_metadata(svc, i) for i in ids]
+        ids, est = list_message_ids(svc, query, limit, fetch_all)
+        return ([fetch_metadata(svc, i) for i in ids], est)
     except HttpError as e:
         raise RuntimeError(f"Gmail API error: {e}")
 
 
 def reset_auth_ui() -> None:
-    with st.expander("Reset authorization", expanded=False):
+    with st.sidebar.expander("Reset authorization", expanded=False):
         if st.button("Reset now"):
             try:
                 if os.path.exists(TOKEN_FILE):
@@ -224,7 +235,8 @@ def reset_auth_ui() -> None:
 def search_ui(creds: Credentials) -> None:
     st.subheader("Search Gmail")
     q = st.text_input("Gmail search query", value="in:inbox newer_than:7d")
-    limit = st.slider("Max results", min_value=5, max_value=200, value=25, step=5)
+    limit = st.slider("Max results", min_value=25, max_value=1000, value=200, step=25)
+    fetch_all = st.checkbox("Fetch all results (up to 1000)", value=False)
     col1, col2 = st.columns([1, 1])
     with col1:
         run = st.button("Search")
@@ -233,13 +245,20 @@ def search_ui(creds: Credentials) -> None:
             url = f"https://mail.google.com/mail/u/0/#search/{urllib.parse.quote(q)}"
             st.link_button("Open in Gmail", url=url)
     if run and q:
-        with st.spinner("Searching Gmail..."):
-            rows = gmail_search(creds, q, limit)
-            if not rows:
-                st.info("No messages found.")
-            else:
-                st.write(f"Found {len(rows)} message(s).")
-                st.dataframe(rows, use_container_width=True)
+        start = time.perf_counter()
+        with st.spinner("Fetching results from Gmail API…", show_time=True):
+            rows, est = gmail_search(creds, q, limit, fetch_all)
+        elapsed = time.perf_counter() - start
+        duration = f"{elapsed*1000:.0f} ms" if elapsed < 1 else f"{elapsed:.2f} s"
+        if not rows:
+            st.info("No messages found.")
+            st.caption(f"Completed in {duration}")
+            return
+        st.write(f"Showing {len(rows)} of ~{est} message(s).")
+        if est > len(rows) and not fetch_all:
+            st.info("Increase Max results or enable 'Fetch all'.")
+        st.dataframe(rows, use_container_width=True)
+        st.sidebar.caption(f"Last fetch took {duration}")
 
 
 def main() -> None:
@@ -247,7 +266,7 @@ def main() -> None:
     creds = get_saved_credentials()
     creds = refresh_if_needed(creds) if creds else None
     if creds and creds.valid:
-        st.success("Authorized for Gmail read-only.")
+        #st.success("Authorized for Gmail read-only.")
         reset_auth_ui()
         search_ui(creds)
         return
