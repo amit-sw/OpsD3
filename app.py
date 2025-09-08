@@ -44,6 +44,15 @@ def refresh_if_needed(creds: Credentials) -> Optional[Credentials]:
                 f.write(creds.to_json())
             return creds
         except Exception as e:
+            msg = str(e)
+            if "invalid_scope" in msg or "invalid_grant" in msg:
+                try:
+                    if os.path.exists(TOKEN_FILE):
+                        os.remove(TOKEN_FILE)
+                except Exception:
+                    pass
+                st.warning("Saved token is no longer valid for the current scopes. Please sign in again.")
+                return None
             st.warning(f"Token refresh failed: {e}")
     return None
 
